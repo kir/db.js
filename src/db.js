@@ -53,7 +53,7 @@
             actions = [
                 [ 'resolve' , 'done' , new CallbackList() , 'resolved' ],
                 [ 'reject' , 'fail' , new CallbackList() , 'rejected' ],
-                [ 'notify' , 'progress' , new CallbackList() ],
+                [ 'notify' , 'progress' , new CallbackList() ]
             ],
             deferred = {},
             promise = {
@@ -231,6 +231,26 @@
                 deferred.reject( e );
             };
             return deferred.promise();
+        };
+
+        this.clear = function (table) {
+
+            if ( closed ) {
+                throw 'Database has been closed';
+            }
+            var transaction = db.transaction( table , transactionModes.readwrite ),
+                store = transaction.objectStore( table ),
+                deferred = Deferred();
+
+            var req = store.clear();
+            req.onsuccess = function ( ) {
+                deferred.resolve();
+            };
+            req.onerror = function ( e ) {
+                deferred.reject( e );
+            };
+            return deferred.promise();
+
         };
         
         this.close = function ( ) {
@@ -451,10 +471,9 @@
         }
     };
     
-    var open = function ( e , server , version , schema ) {
+    var openAndCache = function ( e , server) {
         var db = e.target.result;
         var s = new Server( db , server );
-        var upgrade;
 
         var deferred = Deferred();
         deferred.resolve( s );
@@ -467,25 +486,35 @@
 
     var db = {
         version: '0.8.0',
+
+        deleteDatabase: function(dbName) {
+            var request = indexedDB.deleteDatabase(dbName);
+            request.onupgradeneeded = function ( oldVer, newVer ) {
+                alert("deleted")
+            };
+
+        },
+
         open: function ( options ) {
             var request;
 
             var deferred = Deferred();
 
-            if ( dbCache[ options.server ] ) {
-                open( {
+            var server = options.server;
+            if ( dbCache[ server ] ) {
+                openAndCache( {
                     target: {
-                        result: dbCache[ options.server ]
+                        result: dbCache[ server ]
                     }
-                } , options.server , options.version , options.schema )
+                } , server)
                 .done(deferred.resolve)
                 .fail(deferred.reject)
                 .progress(deferred.notify);
             } else {
-                request = indexedDB.open( options.server , options.version );
+                request = indexedDB.open( server , options.version );
                             
                 request.onsuccess = function ( e ) {
-                    open( e , options.server , options.version , options.schema )
+                    openAndCache( e , server )
                         .done(deferred.resolve)
                         .fail(deferred.reject)
                         .progress(deferred.notify);
