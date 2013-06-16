@@ -1,4 +1,4 @@
-(function ( window , undefined ) {
+(function ( window ) {
     'use strict';
     var indexedDB = window.indexedDB || window.webkitIndexedDB || window.mozIndexedDB || window.oIndexedDB || window.msIndexedDB,
         IDBKeyRange = window.IDBKeyRange || window.webkitIDBKeyRange,
@@ -95,7 +95,7 @@
                 }
             };
 
-        actions.forEach(function ( action , i ) {
+        actions.forEach(function ( action ) {
             var list = action[ 2 ],
                 actionState = action[ 3 ];
 
@@ -185,7 +185,6 @@
 
             var transaction = db.transaction( table , transactionModes.readwrite ),
                 store = transaction.objectStore( table ),
-                keyPath = store.keyPath,
                 deferred = Deferred();
 
             records.forEach( function ( record ) {
@@ -198,7 +197,7 @@
                     req = store.put( record );
                 }
 
-                req.onsuccess = function ( e ) {
+                req.onsuccess = function ( ) {
                     deferred.notify();
                 };
             } );
@@ -318,7 +317,7 @@
 
             if ( cursorType !== 'count' ) {
                 indexArgs.push( direction || 'next' );
-            };
+            }
 
             index[cursorType].apply( index , indexArgs ).onsuccess = function ( e ) {
                 var cursor = e.target.result;
@@ -371,7 +370,7 @@
                         }
                         deferred.resolve( data );
                     }, deferred.reject , deferred.notify );
-                ;
+
 
                 return deferred.promise();
             };
@@ -457,16 +456,26 @@
         }
         
         for ( var tableName in schema ) {
-            var table = schema[ tableName ];
             if ( !hasOwn.call( schema , tableName ) ) {
                 continue;
             }
 
+            try{
+                // Delete existing data to allow creating a new model
+                db.deleteObjectStore(tableName);
+            }
+            catch(e) {
+                // Ignore failure with deleting object store
+            }
+
+            var table = schema[ tableName ];
             var store = db.createObjectStore( tableName , table.key );
 
             for ( var indexKey in table.indexes ) {
-                var index = table.indexes[ indexKey ];
-                store.createIndex( indexKey , index.key || indexKey , Object.keys(index).length ? index : { unique: false } );
+                if ( hasOwn.call( table.indexes , indexKey ) ) {
+                    var index = table.indexes[ indexKey ];
+                    store.createIndex( indexKey , index.key || indexKey , Object.keys(index).length ? index : { unique: false } );
+                }
             }
         }
     };
@@ -486,14 +495,6 @@
 
     var db = {
         version: '0.8.0',
-
-        deleteDatabase: function(dbName) {
-            var request = indexedDB.deleteDatabase(dbName);
-            request.onupgradeneeded = function ( oldVer, newVer ) {
-                alert("deleted")
-            };
-
-        },
 
         open: function ( options ) {
             var request;
