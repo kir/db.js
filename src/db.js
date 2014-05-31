@@ -1,5 +1,6 @@
 (function ( window ) {
     'use strict';
+
     var indexedDB = window.indexedDB || window.webkitIndexedDB || window.mozIndexedDB || window.oIndexedDB || window.msIndexedDB,
         IDBKeyRange = window.IDBKeyRange || window.webkitIDBKeyRange,
         transactionModes = {
@@ -12,6 +13,10 @@
     if ( !indexedDB ) {
         throw 'IndexedDB required';
     }
+
+    var defaultMapper = function (value) {
+        return value;
+    };
 
     var CallbackList = function () {
         var state,
@@ -129,8 +134,18 @@
             }
 
             var records = [];
+            var counter = 0;
+
             for (var i = 0; i < arguments.length - 1; i++) {
-                records[i] = arguments[i + 1];
+                if (Array.isArray(arguments[i + 1])) {
+                    for (var j = 0; j < (arguments[i + 1]).length; j++) {
+                        records[counter] = (arguments[i + 1])[j];
+                        counter++;
+                    }
+                } else {
+                    records[counter] = arguments[i + 1];
+                    counter++;
+                }
             }
 
             var transaction = db.transaction( table , transactionModes.readwrite ),
@@ -223,17 +238,16 @@
                 deferred = Deferred();
             
             var req = store.delete( key );
-            req.onsuccess = function ( ) {
+            transaction.oncomplete = function ( ) {
                 deferred.resolve( key );
             };
-            req.onerror = function ( e ) {
+            transaction.onerror = function ( e ) {
                 deferred.reject( e );
             };
             return deferred.promise();
         };
 
-        this.clear = function (table) {
-
+        this.clear = function ( table ) {
             if ( closed ) {
                 throw 'Database has been closed';
             }
@@ -242,14 +256,13 @@
                 deferred = Deferred();
 
             var req = store.clear();
-            req.onsuccess = function ( ) {
-                deferred.resolve();
+            transaction.oncomplete = function ( ) {
+                deferred.resolve( );
             };
-            req.onerror = function ( e ) {
+            transaction.onerror = function ( e ) {
                 deferred.reject( e );
             };
             return deferred.promise();
-
         };
         
         this.close = function ( ) {
@@ -273,7 +286,7 @@
             req.onsuccess = function ( e ) {
                 deferred.resolve( e.target.result );
             };
-            req.onerror = function ( e ) {
+            transaction.onerror = function ( e ) {
                 deferred.reject( e );
             };
             return deferred.promise();
@@ -306,27 +319,72 @@
 
     var IndexQuery = function ( table , db , indexName ) {
         var that = this;
-        var runQuery = function ( type, args , cursorType , direction ) {
-            var transaction = db.transaction( table ),
+        var modifyObj = false;
+
+        var runQuery = function ( type, args , cursorType , direction, limitRange, filters , mapper ) {
+            var transaction = db.transaction( table, modifyObj ? transactionModes.readwrite : transactionModes.readonly ),
                 store = transaction.objectStore( table ),
                 index = indexName ? store.index( indexName ) : store,
                 keyRange = type ? IDBKeyRange[ type ].apply( null, args ) : null,
                 results = [],
                 deferred = Deferred(),
-                indexArgs = [ keyRange ];
+                indexArgs = [ keyRange ],
+                limitRange = limitRange ? limitRange : null,
+                filters = filters ? filters : [],
+                counter = 0;
 
             if ( cursorType !== 'count' ) {
                 indexArgs.push( direction || 'next' );
             }
 
+            // create a function that will set in the modifyObj properties into
+            // the passed record.
+            var modifyKeys = modifyObj ? Object.keys(modifyObj) : false;
+            var modifyRecord = function(record) {
+                for(var i = 0; i < modifyKeys.length; i++) {
+                    var key = modifyKeys[i];
+                    var val = modifyObj[key];
+                    if(val instanceof Function) val = val(record);
+                    record[key] = val;
+                }
+                return record;
+            };
+
             index[cursorType].apply( index , indexArgs ).onsuccess = function ( e ) {
                 var cursor = e.target.result;
-
                 if ( typeof cursor === typeof 0 ) {
                     results = cursor;
                 } else if ( cursor ) {
-                    results.push( 'value' in cursor ? cursor.value : cursor.key );
-                    cursor.continue();
+                	if ( limitRange !== null && limitRange[0] > counter) {
+                    	counter = limitRange[0];
+                    	cursor.advance(limitRange[0]);
+                    } else if ( limitRange !== null && counter >= (limitRange[0] + limitRange[1]) ) {
+                        //out of limit range... skip
+                    } else {
+                        var matchFilter = true;
+                        var result = 'value' in cursor ? cursor.value : cursor.key;
+
+                        filters.forEach( function ( filter ) {
+                            if ( !filter || !filter.length ) {
+                                //Invalid filter do nothing
+                            } else if ( filter.length === 2 ) {
+                                matchFilter = (result[filter[0]] === filter[1])
+                            } else {
+                                matchFilter = filter[0].apply(undefined,[result]);
+                            }
+                        });
+
+                        if (matchFilter) {
+                            counter++;
+                            results.push( mapper(result) );
+                            // if we're doing a modify, run it now
+                            if(modifyObj) {
+                                result = modifyRecord(result);
+                                cursor.update(result);
+                            }
+                        }
+                        cursor.continue();
+                    }
                 }
             };
 
@@ -346,33 +404,23 @@
             var direction = 'next',
                 cursorType = 'openCursor',
                 filters = [],
+                limitRange = null,
+                mapper = defaultMapper,
                 unique = false;
 
             var execute = function () {
-                var deferred = Deferred();
-                
-                runQuery( type , args , cursorType , unique ? direction + 'unique' : direction )
-                    .then( function ( data ) {
-                        if ( data.constructor === Array ) {
-                            filters.forEach( function ( filter ) {
-                                if ( !filter || !filter.length ) {
-                                    return;
-                                }
+                return runQuery( type , args , cursorType , unique ? direction + 'unique' : direction, limitRange, filters , mapper );
+            };
 
-                                if ( filter.length === 2 ) {
-                                    data = data.filter( function ( x ) {
-                                        return x[ filter[ 0 ] ] === filter[ 1 ];
-                                    });
-                                } else {
-                                    data = data.filter( filter[ 0 ] );
-                                }
-                            });
-                        }
-                        deferred.resolve( data );
-                    }, deferred.reject , deferred.notify );
+            var limit = function () {
+                limitRange = Array.prototype.slice.call( arguments , 0 , 2 )
+                if (limitRange.length == 1) {
+                    limitRange.unshift(0)
+                }
 
-
-                return deferred.promise();
+                return {
+                    execute: execute
+                };
             };
             var count = function () {
                 direction = null;
@@ -389,7 +437,8 @@
                     desc: desc,
                     execute: execute,
                     filter: filter,
-                    distinct: distinct
+                    distinct: distinct,
+                    map: map
                 };
             };
             var filter = function ( ) {
@@ -400,7 +449,10 @@
                     execute: execute,
                     filter: filter,
                     desc: desc,
-                    distinct: distinct
+                    distinct: distinct,
+                    modify: modify,
+                    limit: limit,
+                    map: map
                 };
             };
             var desc = function () {
@@ -410,7 +462,9 @@
                     keys: keys,
                     execute: execute,
                     filter: filter,
-                    distinct: distinct
+                    distinct: distinct,
+                    modify: modify,
+                    map: map
                 };
             };
             var distinct = function () {
@@ -420,7 +474,30 @@
                     count: count,
                     execute: execute,
                     filter: filter,
-                    desc: desc
+                    desc: desc,
+                    modify: modify,
+                    map: map
+                };
+            };
+            var modify = function(update) {
+                modifyObj = update;
+                return {
+                    execute: execute
+                };
+            };
+            var map = function (fn) {
+                mapper = fn;
+
+                return {
+                    execute: execute,
+                    count: count,
+                    keys: keys,
+                    filter: filter,
+                    desc: desc,
+                    distinct: distinct,
+                    modify: modify,
+                    limit: limit,
+                    map: map
                 };
             };
 
@@ -430,7 +507,10 @@
                 keys: keys,
                 filter: filter,
                 desc: desc,
-                distinct: distinct
+                distinct: distinct,
+                modify: modify,
+                limit: limit,
+                map: map
             };
         };
         
@@ -456,26 +536,21 @@
         }
         
         for ( var tableName in schema ) {
-            if ( !hasOwn.call( schema , tableName ) ) {
-                continue;
-            }
-
-            try{
-                // Delete existing data to allow creating a new model
-                db.deleteObjectStore(tableName);
-            }
-            catch(e) {
-                // Ignore failure with deleting object store
-            }
-
             var table = schema[ tableName ];
-            var store = db.createObjectStore( tableName , table.key );
+            var store;
+            if (!hasOwn.call(schema, tableName) || db.objectStoreNames.contains(tableName)) {
+                store = e.currentTarget.transaction.objectStore(tableName);
+            } else {
+                store = db.createObjectStore(tableName, table.key);
+            }
 
             for ( var indexKey in table.indexes ) {
-                if ( hasOwn.call( table.indexes , indexKey ) ) {
-                    var index = table.indexes[ indexKey ];
-                    store.createIndex( indexKey , index.key || indexKey , Object.keys(index).length ? index : { unique: false } );
+                if (store.indexNames.contains(indexKey)) {
+                    continue;
                 }
+                
+                var index = table.indexes[ indexKey ];
+                store.createIndex( indexKey , index.key || indexKey , Object.keys(index).length ? index : { unique: false } );
             }
         }
     };
@@ -494,8 +569,7 @@
     var dbCache = {};
 
     var db = {
-        version: '0.8.0',
-
+        version: '0.9.0',
         open: function ( options ) {
             var request;
 
@@ -532,7 +606,10 @@
             return deferred.promise();
         }
     };
-    if ( typeof define === 'function' && define.amd ) {
+
+    if (typeof module !== 'undefined' && typeof module.exports !== 'undefined') {
+        module.exports = db;
+    } else if ( typeof define === 'function' && define.amd ) {
         define( function() { return db; } );
     } else {
         window.db = db;

@@ -696,6 +696,212 @@
                 } , 1000 , 'timeout in distinct query' );
             });
         });
+
+        describe( 'limit' , function () {
+            it( 'should return first 2 records' , function () {
+                var done;
+
+                runs(function () {
+                    var spec = this;
+
+                    spec.server.test
+                        .query( 'firstName' )
+                        .all()
+                        .limit(2)
+                        .execute()
+                        .done( function ( data ) {
+                            expect( data.length ).toEqual( 2 );
+                            expect( data[ 0 ].id ).toEqual( spec.item1.id );
+                            expect( data[ 1 ].id ).toEqual( spec.item3.id );
+                            done = true;
+                        });
+                });
+
+                waitsFor(function () {
+                    return done;
+                } , 1000 , 'timeout in limit query' );
+            });
+            it( 'should return 2 records, skipping the first' , function () {
+                var done;
+
+                runs(function () {
+                    var spec = this;
+
+                    spec.server.test
+                        .query( 'firstName' )
+                        .all()
+                        .limit(1, 3)
+                        .execute()
+                        .done( function ( data ) {
+                            expect( data.length ).toEqual( 2 );
+                            expect( data[ 0 ].id ).toEqual( spec.item3.id );
+                            expect( data[ 1 ].id ).toEqual( spec.item2.id );
+                            done = true;
+                        });
+                });
+
+                waitsFor(function () {
+                    return done;
+                } , 1000 , 'timeout in limit query' );
+            });
+
+            it( 'should return 1 records, skipping the first' , function () {
+                var done;
+
+                runs(function () {
+                    var spec = this;
+
+                    spec.server.test
+                        .query( 'firstName' )
+                        .all()
+                        .limit(1, 1)
+                        .execute()
+                        .done( function ( data ) {
+                            expect( data.length ).toEqual( 1 );
+                            expect( data[ 0 ].id ).toEqual( spec.item3.id );
+                            done = true;
+                        });
+                });
+
+                waitsFor(function () {
+                    return done;
+                } , 1000 , 'timeout in limit query' );
+            });
+
+            it( 'should return 1 records, skipping the first two' , function () {
+                var done;
+
+                runs(function () {
+                    var spec = this;
+
+                    spec.server.test
+                        .query( 'firstName' )
+                        .all()
+                        .limit(2, 1)
+                        .execute()
+                        .done( function ( data ) {
+                            expect( data.length ).toEqual( 1 );
+                            expect( data[ 0 ].id ).toEqual( spec.item2.id );
+                            done = true;
+                        });
+                });
+
+                waitsFor(function () {
+                    return done;
+                } , 1000 , 'timeout in limit query' );
+            });
+
+        });
+
+        describe( 'query mapping' , function () {
+            it( 'should allow you to transform the object being returned' , function () {
+                var done;
+
+                runs(function () {
+                    var spec = this;
+
+                    spec.server.test
+                        .query( 'age' )
+                        .lowerBound(30)
+                        .map(function (value) { 
+                            return {
+                                fullName: value.firstName + ' ' + value.lastName,
+                                raw: value
+                            };
+                        })
+                        .execute()
+                        .done( function ( data ) {
+                            expect(data[0].fullName).toEqual(data[0].raw.firstName + ' ' + data[0].raw.lastName);
+                            done = true;
+                        });
+                });
+
+                waitsFor(function () {
+                    return done;
+                } , 1000 , 'timeout in atomic modify query' );
+            });
+        });
+
+        describe( 'atomic updates' , function () {
+            it( 'should modify only data returned by query' , function () {
+                var done;
+
+                runs(function () {
+                    var spec = this;
+
+                    spec.server.test
+                        .query( 'age' )
+                        .lowerBound(30)
+                        .modify({aboveThirty: true})
+                        .execute()
+                        .done( function ( data ) {
+                            expect( data.length ).toEqual(2);
+                            for(var i = 0; i < data.length; i++)
+                            {
+                                var result = data[i];
+                                expect(result.aboveThirty).toEqual(true);
+                            }
+                            expect( data[ 0 ].id ).toEqual( spec.item2.id );
+                            expect( data[ 1 ].id ).toEqual( spec.item3.id );
+                            done = true;
+                        });
+                });
+
+                waitsFor(function () {
+                    return done;
+                } , 1000 , 'timeout in atomic modify query' );
+            });
+
+            it( 'should modify data using a function of the original data' , function () {
+                var done;
+
+                runs(function () {
+                    var spec = this;
+
+                    spec.server.test
+                        .query()
+                        .all()
+                        .modify({nextAge: function( item ) { return item.age + 1; }})
+                        .execute()
+                        .done( function ( data ) {
+                            expect( data.length ).toEqual(3);
+                            for(var i = 0; i < data.length; i++)
+                            {
+                                var result = data[i];
+                                expect(result.nextAge).toEqual(result.age + 1);
+                            }
+                            done = true;
+                        });
+                });
+
+                waitsFor(function () {
+                    return done;
+                } , 1000 , 'timeout in atomic modify query' );
+            });
+
+            it( 'should only allow `modify` from a specific query type' , function () {
+                var done;
+
+                runs(function () {
+                    var spec = this;
+
+                    expect(spec.server.test.get('id').modify).toBeUndefined();
+                    expect(spec.server.test.query().modify).toBeUndefined();
+                    expect(spec.server.test.query().all().modify instanceof Function).toEqual(true);
+                    expect(spec.server.test.query().filter({my:'filter'}).modify instanceof Function).toEqual(true);
+                    expect(spec.server.test.query('age').only(30).modify instanceof Function).toEqual(true);
+                    expect(spec.server.test.query('age').bound(1, 3).modify instanceof Function).toEqual(true);
+                    expect(spec.server.test.query('age').lowerBound(1).modify instanceof Function).toEqual(true);
+                    expect(spec.server.test.query('age').upperBound(3).modify instanceof Function).toEqual(true);
+                    expect(spec.server.test.query('age').upperBound(3).desc().modify instanceof Function).toEqual(true);
+                    done = true;
+                });
+
+                waitsFor(function () {
+                    return done;
+                } , 1000 , 'timeout in atomic modify query' );
+            });
+        });
     });
 
     describe( 'index.multiEntry' , function () {

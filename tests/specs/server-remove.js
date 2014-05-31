@@ -100,12 +100,51 @@
 
             var done = false;
             runs( function () {
-                spec.server.remove( 'test' , item.id );
+                spec.server.remove( 'test' , item.id ).done(function () {
+                    spec.server.get( 'test' , item.id ).done( function ( x ) {
+                        expect( x ).toEqual( undefined );
 
-                spec.server.get( 'test' , item.id ).done( function ( x ) {
-                    expect( x ).toEqual( undefined );
+                        done = true;
+                    });
+                });
+            });
 
+            waitsFor( function () {
+                return done;
+            } , 1000 , 'timed out running expects' );
+        });
+
+        it( 'should remove all items from a table' , function () {
+            var item = {
+                firstName: 'Aaron',
+                lastName: 'Powell'
+            };
+            var item2 = {
+                firstName: 'Andrew',
+                lastName: 'Lyon'
+            };
+            
+            var spec = this;
+            var done = false;
+
+            runs( function () {
+                spec.server.add( 'test' , item , item2 ).done( function ( records ) {
                     done = true;
+                });
+            });
+            
+            waitsFor( function () {
+                return done;
+            } , 'timeout waiting for items to be added' , 1000 );
+
+            var done = false;
+            runs( function () {
+                spec.server.clear( 'test' ).done(function () {
+                    spec.server.query( 'test' ).all().execute().done( function ( r ) {
+                        expect( r.length ).toEqual( 0 );
+
+                        done = true;
+                    });
                 });
             });
 
