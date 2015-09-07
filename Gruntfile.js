@@ -1,10 +1,7 @@
 /* global module:false */
 module.exports = function(grunt){
 	// Project configuration.
-	var saucekey = null;
-	if (process.env.TRAVIS_SECURE_ENV_VARS) {
-		saucekey = process.env.saucekey;
-	}
+	var saucekey = 'auzcE6Esp+TT6vpQHUyWf9jpvYpEO1iHWiMfkZTxo+MsJcETw1qaAakAgyE8jwPFHSPPT6wDzt+rLUOd6FkwqSgm3lLuP9wKgikXzgYSpNg+EfHrF1rep+BVZFkbs3uk6NetezlALVPOMq+4O54TbtOiLF9KurjkM5YkryExCmc=';
 
 	if (!saucekey) {
 		console.warn('Unable to load saurcelabs key');
@@ -25,7 +22,7 @@ module.exports = function(grunt){
 			server: {
 				options: {
 					base: ".",
-					port: 9999
+					port: 9999,
 				}
 			}
 		},
@@ -63,11 +60,16 @@ module.exports = function(grunt){
 	});
 	
 	var testJobs = ["clean", "jade", "connect"];
+	var devJobs = ["clean", "jade"];
 	if (saucekey !== null) {
 		testJobs.push("saucelabs-jasmine");
 	}
 	
 	grunt.registerTask('test', testJobs);
 	grunt.registerTask('default', 'test');
+  grunt.registerTask('jasmine-server',function(){
+    grunt.task.run(devJobs)
+    grunt.task.run('connect:server:keepalive');
+  });
 };
 
